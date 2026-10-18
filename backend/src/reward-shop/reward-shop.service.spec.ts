@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { RewardShopService } from './reward-shop.service';
+import { economyConfig } from '../../config/economy.config';
 
 describe('RewardShopService', () => {
   let service: RewardShopService;
@@ -38,7 +39,7 @@ describe('RewardShopService', () => {
   it('purchases item when user has sufficient points and stock is available', () => {
     const purchase = service.purchaseItem('userA', 'item1');
     expect(purchase.itemName).toBe('Bronze Chest');
-    expect(service.getUserPoints('userA')).toBe(900);
+    expect(service.getUserPoints('userA')).toBe(1000 - economyConfig.spend.bronzeChest);
     // UUID v4 format
     expect(purchase.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -57,7 +58,7 @@ describe('RewardShopService', () => {
       idempotencyKey,
     );
     expect(firstPurchase).toBeDefined();
-    expect(service.getUserPoints('userA')).toBe(initialPoints - 100);
+    expect(service.getUserPoints('userA')).toBe(initialPoints - economyConfig.spend.bronzeChest);
     expect(service.getItemById('item1').stock).toBe(initialStock - 1);
 
     // Retrying with the same idempotencyKey must return the exact same purchase record
@@ -70,7 +71,7 @@ describe('RewardShopService', () => {
     expect(retriedPurchase.purchaseDate).toEqual(firstPurchase.purchaseDate);
 
     // Idempotency: points and stock are not deducted a second time
-    expect(service.getUserPoints('userA')).toBe(initialPoints - 100);
+    expect(service.getUserPoints('userA')).toBe(initialPoints - economyConfig.spend.bronzeChest);
     expect(service.getItemById('item1').stock).toBe(initialStock - 1);
   });
 

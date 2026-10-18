@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
+import { economyConfig } from '../../config/economy.config';
 
 export interface ShopItem {
   id: string;
@@ -50,7 +51,7 @@ export class RewardShopService {
         id: 'item1',
         name: 'Bronze Chest',
         description: 'Contains common rewards.',
-        price: 100,
+        price: economyConfig.spend.bronzeChest,
         category: 'Chest',
         stock: 50,
         imageUrl: 'https://placehold.co/100x100/FFD700/000000?text=Chest',
@@ -59,7 +60,7 @@ export class RewardShopService {
         id: 'item2',
         name: 'Silver Key',
         description: 'Unlocks silver chests.',
-        price: 50,
+        price: economyConfig.spend.silverKey,
         category: 'Key',
         stock: 100,
         imageUrl: 'https://placehold.co/100x100/C0C0C0/000000?text=Key',
@@ -68,7 +69,7 @@ export class RewardShopService {
         id: 'item3',
         name: 'Gold Coin Pack',
         description: '1000 virtual coins.',
-        price: 250,
+        price: economyConfig.spend.coinPack,
         category: 'Currency',
         stock: 20,
         imageUrl: 'https://placehold.co/100x100/FFD700/000000?text=Coin',
@@ -77,7 +78,7 @@ export class RewardShopService {
         id: 'item4',
         name: 'XP Boost (1hr)',
         description: 'Boosts experience gain for 1 hour.',
-        price: 75,
+        price: economyConfig.spend.xpBoost,
         category: 'Boost',
         stock: 75,
         imageUrl: 'https://placehold.co/100x100/8A2BE2/FFFFFF?text=Boost',
@@ -86,7 +87,7 @@ export class RewardShopService {
         id: 'item5',
         name: 'Rare Skin Crate',
         description: 'Unlock a rare character skin.',
-        price: 500,
+        price: economyConfig.spend.rareSkinCrate,
         category: 'Crate',
         stock: 10,
         imageUrl: 'https://placehold.co/100x100/FF4500/FFFFFF?text=Skin',
@@ -95,7 +96,7 @@ export class RewardShopService {
         id: 'item6',
         name: 'Health Potion',
         description: 'Restores health in game.',
-        price: 20,
+        price: economyConfig.spend.healthPotion,
         category: 'Consumable',
         stock: 200,
         imageUrl: 'https://placehold.co/100x100/DC143C/FFFFFF?text=Potion',

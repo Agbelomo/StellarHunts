@@ -4,7 +4,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import type { Repository } from 'typeorm';
+import type { DataSource, EntityManager, Repository } from 'typeorm';
 import { Streak } from '../entities/streak.entity';
 import { StreakActivity } from '../entities/streak-activity.entity';
 import type { ActivityType } from '../entities/streak-activity.entity';
@@ -53,6 +53,7 @@ export class StreakService {
     userId: string,
     recordDto: RecordActivityDto,
     config: Partial<StreakCalculationConfig> = {},
+    manager?: EntityManager,
   ): Promise<Streak> {
     // The server clock is the source of truth for "today". Client-supplied
     // dates are only accepted for backfilling past activity — future dates
@@ -182,7 +183,9 @@ export class StreakService {
       streak.lastResetAt = new Date();
     }
 
-    return streakRepo.save(streak);
+    const saved = await streakRepo.save(streak);
+    await this.cacheService?.invalidatePrefix('streak:leaderboard:');
+    return saved;
   }
 
   async getStreakStats(
@@ -358,7 +361,9 @@ export class StreakService {
     streak.lastResetAt = new Date();
     streak.streakStartDate = null;
 
-    return this.streakRepository.save(streak);
+    const saved = await this.streakRepository.save(streak);
+    await this.cacheService?.invalidatePrefix('streak:leaderboard:');
+    return saved;
   }
 
   async getAllActiveStreaks(): Promise<Streak[]> {
@@ -384,6 +389,10 @@ export class StreakService {
       .andWhere('isActive = :isActive', { isActive: true })
       .execute();
 
-    return result.affected || 0;
+    const affected = result.affected || 0;
+    if (affected > 0) {
+      await this.cacheService?.invalidatePrefix('streak:leaderboard:');
+    }
+    return affected;
   }
 }

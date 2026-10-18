@@ -29,6 +29,8 @@ export const DOCS_ROUTE_EXCLUSIONS = [
   DOCS_PATH,
   DOCS_JSON_PATH,
   `${DOCS_PATH}/(.*)`,
+  'healthz',
+  'readyz',
 ];
 
 /**

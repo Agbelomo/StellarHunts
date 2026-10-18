@@ -8,6 +8,8 @@ import {
   Param,
   Request,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -69,5 +71,13 @@ export class UserController {
   @ApiOperation({ summary: 'Get user by ID' })
   getById(@Param('id') id: string) {
     return this.userService.getUserById(id);
+  }
+
+  @Get(':id/profile')
+  @ApiOperation({
+    summary: 'Get user profile with cached score, badge, and completion statistics',
+  })
+  getProfile(@Param('id') id: string) {
+    return this.userService.getProfile(id);
   }
 }

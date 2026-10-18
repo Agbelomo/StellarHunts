@@ -4,6 +4,9 @@ This document lists all error codes raised by the StellarHunts Soroban contracts
 
 ## stellar_hunts Error Codes
 
+
+
+
 | Code | Error Name | Entry Points | Description |
 | --- | --- | --- | --- |
 | 1 | NotAuthorized | `init` | Caller is not authorized to perform the action (e.g., not the admin). |

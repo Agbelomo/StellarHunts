@@ -114,6 +114,11 @@ describe('CacheService', () => {
 
     expect(result).toEqual({ recovered: true });
     expect(loader).toHaveBeenCalledTimes(1);
+    expect(service.inflightCount()).toBe(0);
+
+    const nextResult = await service.getOrSet('cache:redis-down', 60, loader);
+    expect(nextResult).toEqual({ recovered: true });
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 
   it('still returns the fresh value when Redis write fails', async () => {

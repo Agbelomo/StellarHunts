@@ -32,7 +32,15 @@ class DocsController {
   }
 }
 
-@Module({ controllers: [ProbeController, DocsController] })
+@Controller()
+class RootHealthController {
+  @Get('healthz')
+  healthz() {
+    return { status: 'ok' };
+  }
+}
+
+@Module({ controllers: [ProbeController, DocsController, RootHealthController] })
 class ProbeModule {}
 
 describe('API prefix contract (frontend ↔ backend)', () => {
@@ -84,5 +92,16 @@ describe('API prefix contract (frontend ↔ backend)', () => {
 
   it('does not double-prefix excluded routes', () => {
     return request(app.getHttpServer()).get('/api/v1/docs/probe').expect(404);
+  });
+
+  it('serves the orchestrator liveness route outside the API prefix', () => {
+    return request(app.getHttpServer())
+      .get('/healthz')
+      .expect(200)
+      .expect({ status: 'ok' });
+  });
+
+  it('does not prefix the orchestrator readiness route', () => {
+    return request(app.getHttpServer()).get('/api/v1/readyz').expect(404);
   });
 });

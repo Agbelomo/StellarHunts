@@ -288,20 +288,32 @@ fn test_submit_answer_requires_next_indexed_question() {
         client.submit_answer(&player, &2u64, &b(&env, "A2"));
     }));
     assert!(out_of_order.is_err());
-    assert!(panic_text(&out_of_order).contains("Error(Contract, #14)"));
-    assert_eq!(client.get_player_level_progress(&player, &level).last_question_index, 0);
+    assert!(panic_text(&out_of_order).contains("Error(Contract, #16)"));
+    assert_eq!(
+        client
+            .get_player_level_progress(&player, &level)
+            .last_question_index,
+        0
+    );
 
     assert!(client.submit_answer(&player, &1u64, &b(&env, "A1")));
-    env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
     let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_answer(&player, &1u64, &b(&env, "A1"));
     }));
     assert!(duplicate.is_err());
-    assert!(panic_text(&duplicate).contains("Error(Contract, #14)"));
-    assert_eq!(client.get_player_level_progress(&player, &level).last_question_index, 1);
+    assert!(panic_text(&duplicate).contains("Error(Contract, #16)"));
+    assert_eq!(
+        client
+            .get_player_level_progress(&player, &level)
+            .last_question_index,
+        1
+    );
     assert_eq!(client.get_player_level(&player), level);
 
-    env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
     assert!(client.submit_answer(&player, &2u64, &b(&env, "A2")));
     assert_eq!(client.get_player_level(&player), crate::Levels::Medium);
 }
@@ -337,7 +349,8 @@ fn test_retire_question_compacts_level_index_and_answer_order() {
     }));
     assert!(retired_answer.is_err());
     assert!(client.submit_answer(&player, &2u64, &b(&env, "A2")));
-    env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
     assert!(client.submit_answer(&player, &3u64, &b(&env, "A3")));
     assert_eq!(client.get_player_level(&player), crate::Levels::Medium);
 }
@@ -504,8 +517,8 @@ fn test_claim_level_completion_nft_retry_safe_on_nft_panic() {
     // contract's nft_minted flag as if a previous cross-contract call
     // was interrupted before the storage write.
     env.as_contract(&contract_id, || {
-        let lp_key = crate::DataKey::PlayerLevelProgress(player.clone(), level.clone());
-        let mut lp: crate::LevelProgress = env.storage().persistent().get(&lp_key).unwrap();
+        let lp_key = crate::DataKey::PlayerLevelProgressV2(player.clone(), level.clone());
+        let mut lp: crate::LevelProgressV2 = env.storage().persistent().get(&lp_key).unwrap();
         lp.nft_minted = false;
         env.storage().persistent().set(&lp_key, &lp);
     });
@@ -702,9 +715,9 @@ fn test_retire_question_sets_flag() {
 }
 
 /// Submitting to a retired question must fail with the dedicated
-/// `QuestionRetired` (#14) error rather than grading the answer.
+/// `QuestionRetired` (#15) error rather than grading the answer.
 #[test]
-#[should_panic(expected = "Error(Contract, #14)")]
+#[should_panic(expected = "Error(Contract, #15)")]
 fn test_retired_question_cannot_be_answered() {
     let env = Env::default();
     env.ledger().set_sequence_number(100_000);
@@ -758,7 +771,7 @@ fn test_retired_answer_does_not_change_progress_or_complete_level() {
 
 /// `request_hint` must refuse retired questions instead of returning the hint.
 #[test]
-#[should_panic(expected = "Error(Contract, #14)")]
+#[should_panic(expected = "Error(Contract, #15)")]
 fn test_retired_question_hint_denied() {
     let env = Env::default();
     env.ledger().set_sequence_number(100_000);
@@ -812,7 +825,11 @@ fn test_readding_same_content_is_not_retired() {
 #[test]
 fn test_legacy_question_readable() {
     let env = Env::default();
-    let (_admin, contract_id, client) = init_with_admin(&env);
+    let admin = new_admin(&env);
+    let contract_id = env.register_contract(None, StellarHunts);
+    let client = StellarHuntsClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.init(&admin);
 
     // Write a Question exactly as an old (unversioned) contract would have:
     // version field = 0, question stored under DataKey::Question(7).
@@ -837,14 +854,18 @@ fn test_legacy_question_readable() {
     assert_eq!(got.level, crate::Levels::Easy);
 }
 
-/// `LevelProgress` values written to storage must round-trip field-for-field
-/// through the public view. Appending a field in a future schema version
-/// must preserve every existing field (documented in
-/// onchain/docs/storage-versioning.md).
+/// A `LevelProgress` written in the pre-versioning (schema version 1)
+/// shape — under the original `PlayerLevelProgress` key, without a
+/// `version` field — must still be readable by `get_player_level_progress`
+/// and `get_player_level_progress_v2` (issue #463).
 #[test]
 fn test_level_progress_roundtrip_compat() {
     let env = Env::default();
-    let (_admin, contract_id, client) = init_with_admin(&env);
+    let admin = new_admin(&env);
+    let contract_id = env.register_contract(None, StellarHunts);
+    let client = StellarHuntsClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.init(&admin);
 
     let player = user(&env);
     let level = crate::Levels::Medium;
@@ -866,6 +887,7 @@ fn test_level_progress_roundtrip_compat() {
         );
     });
 
+    // Legacy ABI view round-trips every pre-versioning field.
     let got = client.get_player_level_progress(&player, &level);
     assert_eq!(got.player, player);
     assert_eq!(got.level, level);
@@ -874,6 +896,198 @@ fn test_level_progress_roundtrip_compat() {
     assert_eq!(got.attempts, 5);
     assert!(got.nft_minted);
     assert_eq!(got.last_attempt_ledger, 12345);
+
+    // Versioned view surfaces the legacy record with the legacy version.
+    let got_v2 = client.get_player_level_progress_v2(&player, &level);
+    assert_eq!(got_v2.version, crate::LEGACY_RECORD_VERSION);
+    assert_eq!(got_v2.attempts, 5);
+    assert!(got_v2.nft_minted);
+}
+
+/// A `LevelProgressV2` written under the versioned key round-trips
+/// field-for-field through `get_player_level_progress_v2`, mirroring
+/// `test_legacy_question_readable` for the versioned shapes (issue #463).
+#[test]
+fn test_level_progress_v2_roundtrip() {
+    let env = Env::default();
+    let admin = new_admin(&env);
+    let contract_id = env.register_contract(None, StellarHunts);
+    let client = StellarHuntsClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let player = user(&env);
+    let level = crate::Levels::Hard;
+
+    let lp = crate::LevelProgressV2 {
+        player: player.clone(),
+        level: level.clone(),
+        last_question_index: 2,
+        is_completed: true,
+        attempts: 7,
+        nft_minted: false,
+        last_attempt_ledger: 999,
+        version: crate::CURRENT_SCHEMA_VERSION,
+    };
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(
+            &crate::DataKey::PlayerLevelProgressV2(player.clone(), level.clone()),
+            &lp,
+        );
+    });
+
+    let got = client.get_player_level_progress_v2(&player, &level);
+    assert_eq!(got.player, player);
+    assert_eq!(got.level, level);
+    assert_eq!(got.last_question_index, 2);
+    assert!(got.is_completed);
+    assert_eq!(got.attempts, 7);
+    assert!(!got.nft_minted);
+    assert_eq!(got.last_attempt_ledger, 999);
+    assert_eq!(got.version, crate::CURRENT_SCHEMA_VERSION);
+
+    // The legacy view still surfaces the same record.
+    let legacy_view = client.get_player_level_progress(&player, &level);
+    assert_eq!(legacy_view.attempts, 7);
+    assert!(legacy_view.is_completed);
+}
+
+/// Writing a versioned record after touching a pre-versioning record must
+/// stamp `CURRENT_SCHEMA_VERSION`, store it under the `*V2` key, and remove
+/// the legacy entry (lazy migration, issue #463).
+#[test]
+fn test_lazy_migration_upgrades_legacy_record_on_write() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100_000);
+    let (_admin, contract_id, client) = init_with_admin(&env);
+    assert_eq!(client.get_schema_version(), crate::CURRENT_SCHEMA_VERSION);
+
+    let player = user(&env);
+    let level = crate::Levels::Easy;
+    client.set_question_per_level(&5u32);
+    client.add_question(&level, &b(&env, "Q?"), &b(&env, "A"), &b(&env, "H"));
+
+    // First attempt writes versioned records.
+    assert!(!client.submit_answer(&player, &1u64, &b(&env, "wrong")));
+
+    // Replace the versioned record with a pre-versioning one under the
+    // legacy key, exactly as a version-1 deployment would have left it.
+    env.as_contract(&contract_id, || {
+        let legacy = crate::LevelProgress {
+            player: player.clone(),
+            level: level.clone(),
+            last_question_index: 0,
+            is_completed: false,
+            attempts: 4,
+            nft_minted: false,
+            last_attempt_ledger: 99,
+        };
+        let legacy_key = crate::DataKey::PlayerLevelProgress(player.clone(), level.clone());
+        env.storage().persistent().set(&legacy_key, &legacy);
+        env.storage()
+            .persistent()
+            .remove(&crate::DataKey::PlayerLevelProgressV2(
+                player.clone(),
+                level.clone(),
+            ));
+    });
+
+    // The legacy record is readable before migration.
+    let before = client.get_player_level_progress_v2(&player, &level);
+    assert_eq!(before.version, crate::LEGACY_RECORD_VERSION);
+    assert_eq!(before.attempts, 4);
+
+    // Next write migrates lazily.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
+    assert!(!client.submit_answer(&player, &1u64, &b(&env, "wrong")));
+
+    env.as_contract(&contract_id, || {
+        // Legacy entry is gone.
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&crate::DataKey::PlayerLevelProgress(
+                player.clone(),
+                level.clone()
+            )));
+        // Versioned entry carries the current schema version and the
+        // legacy attempt count plus the new attempt.
+        let migrated: crate::LevelProgressV2 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::PlayerLevelProgressV2(
+                player.clone(),
+                level.clone(),
+            ))
+            .unwrap();
+        assert_eq!(migrated.version, crate::CURRENT_SCHEMA_VERSION);
+        assert_eq!(migrated.attempts, 5);
+    });
+
+    // The top-level record is initialized under the versioned key.
+    let pp = client.get_player_progress_v2(&player);
+    assert!(pp.is_initialized);
+    assert_eq!(pp.version, crate::CURRENT_SCHEMA_VERSION);
+    assert_eq!(pp.address, player);
+}
+
+/// The versioned and legacy views agree for a player with no record
+/// (issue #463).
+#[test]
+fn test_player_progress_v2_default_for_unknown_player() {
+    let env = Env::default();
+    let admin = new_admin(&env);
+    let contract_id = env.register_contract(None, StellarHunts);
+    let client = StellarHuntsClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let player = user(&env);
+    let pp = client.get_player_progress_v2(&player);
+    assert_eq!(pp.address, player);
+    assert!(!pp.is_initialized);
+    assert_eq!(pp.current_level, crate::Levels::Easy);
+    assert_eq!(pp.version, 0);
+
+    let lp = client.get_player_level_progress_v2(&player, &crate::Levels::Easy);
+    assert_eq!(lp.player, player);
+    assert_eq!(lp.version, 0);
+    assert_eq!(lp.attempts, 0);
+}
+
+/// For a player with no stored record, `get_player_level_progress` must
+/// return a default whose `player` field is the queried `player`, never the
+/// contract's own address (issue #449).
+#[test]
+fn test_default_level_progress_uses_queried_player() {
+    let env = Env::default();
+    let admin = new_admin(&env);
+    let contract_id = env.register_contract(None, StellarHunts);
+    let client = StellarHuntsClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    // A player that has never interacted with the contract, so no
+    // `PlayerLevelProgress` record exists for them.
+    let player = user(&env);
+    let level = crate::Levels::Hard;
+
+    let got = client.get_player_level_progress(&player, &level);
+
+    assert_eq!(got.player, player);
+    assert_ne!(
+        got.player, contract_id,
+        "default progress must not carry the contract address"
+    );
+    assert_eq!(got.level, level);
+    assert_eq!(got.last_question_index, 0);
+    assert!(!got.is_completed);
+    assert_eq!(got.attempts, 0);
+    assert!(!got.nft_minted);
+    assert_eq!(got.last_attempt_ledger, 0);
 }
 
 /// The numeric discriminants of `Levels` are persisted in storage and in
@@ -889,12 +1103,15 @@ fn test_levels_discriminants_stable() {
 #[test]
 fn test_unauthorized_add_question_fails() {
     let env = Env::default();
+    // Authorize ONLY the admin's `init` call, so the later non-admin
+    // `add_question` attempt hits `require_admin` without a mocked auth and
+    // panics (issue #265-style negative auth coverage).
     let (_admin, _contract_id, client) = init_admin_auth_only(&env);
 
-    // Call as normal user (no admin auth)
+    // Call as normal user
     let should_panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.add_question(
-            &Levels::Easy,
+            &crate::Levels::Easy,
             &Bytes::from_slice(&env, b"q"),
             &Bytes::from_slice(&env, b"a"),
             &Bytes::from_slice(&env, b"h"),
@@ -996,8 +1213,8 @@ fn test_submit_answer_attempts_overflow_panics() {
 
     // Push attempts to u32::MAX directly.
     env.as_contract(&contract_id, || {
-        let key = crate::DataKey::PlayerLevelProgress(player.clone(), level.clone());
-        let mut lp: crate::LevelProgress = env.storage().persistent().get(&key).unwrap();
+        let key = crate::DataKey::PlayerLevelProgressV2(player.clone(), level.clone());
+        let mut lp: crate::LevelProgressV2 = env.storage().persistent().get(&key).unwrap();
         lp.attempts = u32::MAX;
         env.storage().persistent().set(&key, &lp);
     });
@@ -1036,8 +1253,8 @@ fn test_submit_answer_last_question_index_overflow_panics() {
 
     // Push last_question_index to u32::MAX directly.
     env.as_contract(&contract_id, || {
-        let key = crate::DataKey::PlayerLevelProgress(player.clone(), level.clone());
-        let mut lp: crate::LevelProgress = env.storage().persistent().get(&key).unwrap();
+        let key = crate::DataKey::PlayerLevelProgressV2(player.clone(), level.clone());
+        let mut lp: crate::LevelProgressV2 = env.storage().persistent().get(&key).unwrap();
         lp.last_question_index = u32::MAX;
         env.storage().persistent().set(&key, &lp);
     });
@@ -1330,4 +1547,303 @@ fn test_property_index_contains_each_question_exactly_once_after_interleaved_ops
     );
     state[4].1 = Levels::Easy;
     assert_index_invariants(&state);
+}
+
+// ---------------------------------------------------------------------
+// Invariant tests for interleaved admin mutations (issue #468)
+// ---------------------------------------------------------------------
+//
+// The index invariant is formally stated in `lib.rs` (issue #464):
+//   1. `QuestionPerLevelIndex(level)` stores the count `N` of live questions.
+//   2. `QuestionsByLevel(level, i)` for `i in 0..N` holds the i-th live id.
+//   3. Each live id appears in the level's index exactly once.
+//   4. Slots at index `>= N` are cleared.
+//
+// Unlike the property test above, the harness here labels every failure
+// with the admin operation and step number whose application is suspected
+// of breaking the invariant, and the sequence includes `retire_question`
+// and enumeration through `get_question_in_level`.
+
+/// One recorded admin operation, used to label invariant failures.
+#[derive(Clone)]
+enum AdminOp {
+    AddQuestion(u64, Levels),
+    MoveQuestion(u64, Levels, Levels),
+    RetireQuestion(u64),
+    SetQuestionPerLevel(u32),
+}
+
+impl AdminOp {
+    fn describe(&self) -> String {
+        match self {
+            AdminOp::AddQuestion(id, lvl) => format!("add_question({id}, {lvl:?})"),
+            AdminOp::MoveQuestion(id, from, to) => {
+                format!("update_question({id}, {from:?} -> {to:?})")
+            }
+            AdminOp::RetireQuestion(id) => format!("retire_question({id})"),
+            AdminOp::SetQuestionPerLevel(n) => format!("set_question_per_level({n})"),
+        }
+    }
+}
+
+/// Asserts the on-chain index invariant against the expected set of live
+/// `(question_id, level)` pairs. Every panic message names `op` and the
+/// step number, so a failure points at the operation that broke it.
+fn assert_index_invariant(
+    env: &Env,
+    contract_id: &Address,
+    live: &[(u64, Levels)],
+    op: &AdminOp,
+    step: usize,
+) {
+    let op_desc = op.describe();
+    let levels = [Levels::Easy, Levels::Medium, Levels::Hard, Levels::Master];
+
+    env.as_contract(contract_id, || {
+        let mut seen_across_levels: std::vec::Vec<u64> = std::vec::Vec::new();
+
+        for lvl in levels {
+            let expected: std::vec::Vec<u64> = live
+                .iter()
+                .filter(|(_, l)| *l == lvl)
+                .map(|(id, _)| *id)
+                .collect();
+
+            // Criterion 2: the stored count equals the number of live entries.
+            let count: u32 = env
+                .storage()
+                .persistent()
+                .get(&crate::DataKey::QuestionPerLevelIndex(lvl.clone()))
+                .unwrap_or(0u32);
+            assert_eq!(
+                count as usize,
+                expected.len(),
+                "after step {step} ({op_desc}): QuestionPerLevelIndex({lvl:?}) is {count}, expected {} live entries",
+                expected.len(),
+            );
+
+            for i in 0..count {
+                let qid: u64 = env
+                    .storage()
+                    .persistent()
+                    .get(&crate::DataKey::QuestionsByLevel(lvl.clone(), i))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "after step {step} ({op_desc}): QuestionsByLevel({lvl:?}, {i}) is missing but index count is {count}"
+                        )
+                    });
+
+                // Criteria 1 and 3: each live id appears at most once across
+                // all level indices, and only in its own level.
+                assert!(
+                    !seen_across_levels.contains(&qid),
+                    "after step {step} ({op_desc}): question {qid} appears more than once across the level indices"
+                );
+                assert!(
+                    expected.contains(&qid),
+                    "after step {step} ({op_desc}): question {qid} found in level {lvl:?} index but is not live there"
+                );
+
+                seen_across_levels.push(qid);
+            }
+
+            // Criterion 4: the first slot past the live window is cleared.
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&crate::DataKey::QuestionsByLevel(lvl.clone(), count)),
+                "after step {step} ({op_desc}): trailing slot QuestionsByLevel({lvl:?}, {count}) is still populated"
+            );
+        }
+
+        // Every live id is reachable through the indices.
+        for (id, lvl) in live {
+            assert!(
+                seen_across_levels.contains(id),
+                "after step {step} ({op_desc}): live question {id} of level {lvl:?} is missing from all level indices"
+            );
+        }
+    });
+}
+
+fn add_named_question(client: &StellarHuntsClient, env: &Env, lvl: &Levels, text: &str) {
+    client.add_question(lvl, &b(env, text), &b(env, "A"), &b(env, "H"));
+}
+
+#[test]
+fn test_index_invariant_holds_after_each_interleaved_admin_operation() {
+    let env = Env::default();
+    let (_admin, contract_id, client) = init_with_admin(&env);
+
+    let mut step = 0usize;
+    let mut check = |live: &[(u64, Levels)], op: &AdminOp| {
+        step += 1;
+        assert_index_invariant(&env, &contract_id, live, op, step);
+    };
+
+    let mut live: std::vec::Vec<(u64, Levels)> = std::vec::Vec::new();
+
+    client.set_question_per_level(&4u32);
+    check(&live, &AdminOp::SetQuestionPerLevel(4));
+
+    // Adds across three levels, checking the invariant after each add.
+    add_named_question(&client, &env, &Levels::Easy, "Q1");
+    live.push((1u64, Levels::Easy));
+    check(&live, &AdminOp::AddQuestion(1, Levels::Easy));
+
+    add_named_question(&client, &env, &Levels::Medium, "Q2");
+    live.push((2u64, Levels::Medium));
+    check(&live, &AdminOp::AddQuestion(2, Levels::Medium));
+
+    add_named_question(&client, &env, &Levels::Easy, "Q3");
+    live.push((3u64, Levels::Easy));
+    check(&live, &AdminOp::AddQuestion(3, Levels::Easy));
+
+    add_named_question(&client, &env, &Levels::Hard, "Q4");
+    live.push((4u64, Levels::Hard));
+    check(&live, &AdminOp::AddQuestion(4, Levels::Hard));
+
+    // Move Q3 from Easy to Medium.
+    client.update_question(
+        &3u64,
+        &b(&env, "Q3-moved"),
+        &b(&env, "A3"),
+        &Levels::Medium,
+        &b(&env, "H3"),
+    );
+    live.iter_mut().find(|(id, _)| *id == 3).unwrap().1 = Levels::Medium;
+    check(
+        &live,
+        &AdminOp::MoveQuestion(3, Levels::Easy, Levels::Medium),
+    );
+
+    // Criterion: a move is followed by an enumeration through
+    // `get_question_in_level`, and every level enumerates exactly the
+    // live questions in their index order.
+    assert_eq!(
+        client.get_question_in_level(&Levels::Easy, &0u32),
+        b(&env, "Q1")
+    );
+    assert_eq!(
+        client.get_question_in_level(&Levels::Medium, &0u32),
+        b(&env, "Q2")
+    );
+    assert_eq!(
+        client.get_question_in_level(&Levels::Medium, &1u32),
+        b(&env, "Q3-moved")
+    );
+    assert_eq!(
+        client.get_question_in_level(&Levels::Hard, &0u32),
+        b(&env, "Q4")
+    );
+
+    // Retire Q2: the first Medium slot compacts and Q3-moved shifts down.
+    client.retire_question(&2u64);
+    live.retain(|(id, _)| *id != 2);
+    check(&live, &AdminOp::RetireQuestion(2));
+    assert_eq!(
+        client.get_question_in_level(&Levels::Medium, &0u32),
+        b(&env, "Q3-moved")
+    );
+
+    // Move Q4 from Hard to Easy.
+    client.update_question(
+        &4u64,
+        &b(&env, "Q4-moved"),
+        &b(&env, "A4"),
+        &Levels::Easy,
+        &b(&env, "H4"),
+    );
+    live.iter_mut().find(|(id, _)| *id == 4).unwrap().1 = Levels::Easy;
+    check(&live, &AdminOp::MoveQuestion(4, Levels::Hard, Levels::Easy));
+
+    // `set_question_per_level` is part of the interleaved surface. Lowering
+    // it below current Easy occupancy must not itself mutate any index.
+    client.set_question_per_level(&2u32);
+    check(&live, &AdminOp::SetQuestionPerLevel(2));
+
+    // Retire Q1: Easy drops to a single live question.
+    client.retire_question(&1u64);
+    live.retain(|(id, _)| *id != 1);
+    check(&live, &AdminOp::RetireQuestion(1));
+
+    // Final enumeration: walk each level's full live window through the
+    // public read path.
+    for (lvl, texts) in [
+        (Levels::Easy, std::vec!["Q4-moved"]),
+        (Levels::Medium, std::vec!["Q3-moved"]),
+        (Levels::Hard, std::vec![]),
+    ] {
+        for (i, text) in texts.iter().enumerate() {
+            assert_eq!(
+                client.get_question_in_level(&lvl, &(i as u32)),
+                b(&env, text),
+                "enumeration of {lvl:?} at index {i} diverged after the interleaved sequence"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_index_invariant_when_a_level_is_drained_by_retirements() {
+    let env = Env::default();
+    let (_admin, contract_id, client) = init_with_admin(&env);
+
+    let mut step = 0usize;
+    let mut check = |live: &[(u64, Levels)], op: &AdminOp| {
+        step += 1;
+        assert_index_invariant(&env, &contract_id, live, op, step);
+    };
+
+    let mut live: std::vec::Vec<(u64, Levels)> = std::vec::Vec::new();
+
+    client.set_question_per_level(&3u32);
+    check(&live, &AdminOp::SetQuestionPerLevel(3));
+
+    add_named_question(&client, &env, &Levels::Easy, "Q1");
+    live.push((1u64, Levels::Easy));
+    check(&live, &AdminOp::AddQuestion(1, Levels::Easy));
+
+    add_named_question(&client, &env, &Levels::Easy, "Q2");
+    live.push((2u64, Levels::Easy));
+    check(&live, &AdminOp::AddQuestion(2, Levels::Easy));
+
+    add_named_question(&client, &env, &Levels::Medium, "Q3");
+    live.push((3u64, Levels::Medium));
+    check(&live, &AdminOp::AddQuestion(3, Levels::Medium));
+
+    // Drain Easy entirely, one retirement at a time.
+    client.retire_question(&1u64);
+    live.retain(|(id, _)| *id != 1);
+    check(&live, &AdminOp::RetireQuestion(1));
+
+    client.retire_question(&2u64);
+    live.retain(|(id, _)| *id != 2);
+    check(&live, &AdminOp::RetireQuestion(2));
+
+    // Retiring an unknown id must not disturb the indices.
+    let unknown = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.retire_question(&999u64);
+    }));
+    assert!(unknown.is_err(), "retiring an unknown question must fail");
+    check(&live, &AdminOp::RetireQuestion(999));
+
+    env.as_contract(&contract_id, || {
+        let easy_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::QuestionPerLevelIndex(Levels::Easy))
+            .unwrap_or(0u32);
+        assert_eq!(
+            easy_count, 0,
+            "draining a level must leave its index count at zero"
+        );
+    });
+
+    // The remaining Medium question is untouched and still enumerates.
+    assert_eq!(
+        client.get_question_in_level(&Levels::Medium, &0u32),
+        b(&env, "Q3")
+    );
+    check(&live, &AdminOp::RetireQuestion(999));
 }

@@ -33,6 +33,7 @@ describe('HealthController', () => {
           useValue: {
             pingCheck: jest.fn(),
             isConfigured: stellarConfigured,
+            isRequired: stellarConfigured,
           },
         },
       ],
@@ -57,6 +58,11 @@ describe('HealthController', () => {
       expect(result.timestamp).toBeDefined();
       expect(dbIndicator.pingCheck).not.toHaveBeenCalled();
       expect(redisIndicator.pingCheck).not.toHaveBeenCalled();
+    });
+
+    it('exposes the root /healthz alias', async () => {
+      await buildModule(false);
+      expect(controller.healthz()).toMatchObject({ status: 'ok' });
     });
   });
 
@@ -93,6 +99,12 @@ describe('HealthController', () => {
       const checks = (healthCheck.check as jest.Mock).mock.calls[0][0];
       expect(checks).toHaveLength(2);
       expect(stellar.pingCheck).not.toHaveBeenCalled();
+    });
+
+    it('exposes the root /readyz alias', async () => {
+      await buildModule(false);
+      await controller.readyz();
+      expect(healthCheck.check).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -29,6 +29,9 @@ export class CacheService implements OnApplicationShutdown {
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private readonly namespace =
     process.env.CACHE_NAMESPACE?.trim() || 'stellarhunts';
+  private hits = 0;
+  private misses = 0;
+  private invalidationVersion = 0;
 
   constructor(@InjectRedis() private readonly redis: Redis) {}
 
@@ -48,6 +51,7 @@ export class CacheService implements OnApplicationShutdown {
     jitterSeconds: number = 10,
   ): Promise<T> {
     const scopedKey = `${this.namespace}:${key}`;
+    const invalidationVersion = this.invalidationVersion;
 
     // 1. Try Redis first.
     let cached: string | null = null;
@@ -60,7 +64,9 @@ export class CacheService implements OnApplicationShutdown {
     }
     if (cached !== null) {
       try {
-        return JSON.parse(cached) as T;
+        const value = JSON.parse(cached) as T;
+        this.hits += 1;
+        return value;
       } catch (err) {
         // Corrupt cache entry — drop it and fall through to the loader.
         this.logger.warn(
@@ -68,6 +74,7 @@ export class CacheService implements OnApplicationShutdown {
         );
       }
     }
+    this.misses += 1;
 
     // 2. Single-flight: piggyback on the in-flight promise if one exists.
     const existing = this.inFlight.get(scopedKey);
@@ -86,7 +93,9 @@ export class CacheService implements OnApplicationShutdown {
           const ttl =
             baseTtlSeconds +
             Math.floor(Math.random() * Math.max(1, jitterSeconds));
-          await this.redis.set(scopedKey, JSON.stringify(fresh), 'EX', ttl);
+          if (invalidationVersion === this.invalidationVersion) {
+            await this.redis.set(scopedKey, JSON.stringify(fresh), 'EX', ttl);
+          }
         } catch (err) {
           this.logger.warn(
             `Redis WRITE failed for key "${key}": ${(err as Error).message}. Returning value without caching.`,
@@ -94,7 +103,7 @@ export class CacheService implements OnApplicationShutdown {
         }
         return fresh;
       } finally {
-        this.inFlight.delete(key);
+        this.inFlight.delete(scopedKey);
       }
     })();
 
@@ -102,18 +111,36 @@ export class CacheService implements OnApplicationShutdown {
     return promise as Promise<T>;
   }
 
-  /**
-   * Invalidate one or more keys. Currently unused (we rely on TTL-only
-   * invalidation for v1) but exposed so future write paths / admin tools
-   * can flip caches manually without a hard reload (#107).
-   */
+  /** Invalidate one or more namespaced cache keys. */
   async invalidate(...keys: string[]): Promise<void> {
     if (keys.length === 0) return;
+    this.invalidationVersion += 1;
     try {
-      await this.redis.del(...keys);
+      await this.redis.del(...keys.map((key) => `${this.namespace}:${key}`));
     } catch (err) {
       this.logger.warn(`Redis DEL failed: ${(err as Error).message}.`);
     }
+  }
+
+  /** Invalidate all keys whose feature-specific key starts with `prefix`. */
+  async invalidatePrefix(prefix: string): Promise<void> {
+    this.invalidationVersion += 1;
+    try {
+      const keys = await this.redis.keys(`${this.namespace}:${prefix}*`);
+      if (keys.length > 0) await this.redis.del(...keys);
+    } catch (err) {
+      this.logger.warn(`Redis prefix invalidation failed: ${(err as Error).message}.`);
+    }
+  }
+
+  /** Snapshot suitable for a metrics endpoint or periodic metrics exporter. */
+  getMetrics(): { hits: number; misses: number; hitRate: number } {
+    const total = this.hits + this.misses;
+    return {
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: total === 0 ? 0 : this.hits / total,
+    };
   }
 
   /** Test/observability helper: number of in-flight loaders right now. */

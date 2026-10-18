@@ -2,7 +2,12 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { UserService } from './user.service';
-import { User } from './entities/user.entity';
+import { User } from '../auth/entities/user.entity';
+import { ChallengeCompletion } from '../game-mechanic/entities/challenge-completion.entity';
+import { Inventory } from '../user-inventory/entities/inventory';
+import { PuzzleCompletion } from '../puzzle-dependency/entities/puzzle-completion.entity';
+import { UserRank } from '../user-ranking/entities/user-ranking.entity';
+import { CacheService } from '../cache/cache.service';
 import { LinkWalletDto } from './dto/link-wallet.dto';
 
 describe('UserService', () => {
@@ -11,6 +16,13 @@ describe('UserService', () => {
     create: jest.Mock;
     save: jest.Mock;
     findOne: jest.Mock;
+  };
+  const userRanksRepo = { findOne: jest.fn() };
+  const inventoryRepo = { find: jest.fn() };
+  const puzzleCompletionsRepo = { count: jest.fn() };
+  const challengeCompletionsRepo = { count: jest.fn() };
+  const cache = {
+    getOrSet: jest.fn((_key, _ttl, loader) => loader()),
   };
 
   const WALLET = '0xabc1234567890abc1234567890abc1234567890';
@@ -29,6 +41,17 @@ describe('UserService', () => {
           provide: getRepositoryToken(User),
           useValue: usersRepo,
         },
+        { provide: getRepositoryToken(UserRank), useValue: userRanksRepo },
+        { provide: getRepositoryToken(Inventory), useValue: inventoryRepo },
+        {
+          provide: getRepositoryToken(PuzzleCompletion),
+          useValue: puzzleCompletionsRepo,
+        },
+        {
+          provide: getRepositoryToken(ChallengeCompletion),
+          useValue: challengeCompletionsRepo,
+        },
+        { provide: CacheService, useValue: cache },
       ],
     }).compile();
 
@@ -37,6 +60,91 @@ describe('UserService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('getProfile', () => {
+    it('returns the safe user profile with cached score, badge, and completion aggregates', async () => {
+      const user = {
+        id: 'user-1',
+        name: 'Player',
+        username: 'player',
+        bio: 'Puzzle solver',
+        avatarUrl: 'https://example.com/avatar.png',
+        walletAddress: 'GABC',
+        createdAt: new Date('2025-01-01T00:00:00.000Z'),
+      };
+      usersRepo.findOne.mockResolvedValue(user);
+      userRanksRepo.findOne.mockResolvedValue({
+        score: 1250,
+        achievements: 10,
+        activityPoints: 250,
+        rank: 3,
+      });
+      puzzleCompletionsRepo.count.mockResolvedValue(4);
+      challengeCompletionsRepo.count.mockResolvedValue(2);
+      inventoryRepo.find.mockResolvedValue([
+        {
+          assetId: 'badge-1',
+          acquiredAt: new Date('2025-02-01T00:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.getProfile('user-1');
+
+      expect(cache.getOrSet).toHaveBeenCalledWith(
+        'users:profile:user-1',
+        60,
+        expect.any(Function),
+      );
+      expect(result).toEqual({
+        user,
+        stats: {
+          score: 1250,
+          achievements: 10,
+          activityPoints: 250,
+          rank: 3,
+          completions: { puzzles: 4, challenges: 2, total: 6 },
+          badges: {
+            count: 1,
+            items: [
+              {
+                id: 'badge-1',
+                acquiredAt: new Date('2025-02-01T00:00:00.000Z'),
+              },
+            ],
+          },
+        },
+      });
+      expect(usersRepo.findOne.mock.calls[0][0].select.password).toBeUndefined();
+    });
+
+    it('returns zero stats for a user without ranking or earned assets', async () => {
+      usersRepo.findOne.mockResolvedValue({ id: 'user-1' });
+      userRanksRepo.findOne.mockResolvedValue(null);
+      puzzleCompletionsRepo.count.mockResolvedValue(0);
+      challengeCompletionsRepo.count.mockResolvedValue(0);
+      inventoryRepo.find.mockResolvedValue([]);
+
+      const result = await service.getProfile('user-1');
+
+      expect(result.stats).toEqual({
+        score: 0,
+        achievements: 0,
+        activityPoints: 0,
+        rank: 0,
+        completions: { puzzles: 0, challenges: 0, total: 0 },
+        badges: { count: 0, items: [] },
+      });
+    });
+
+    it('does not cache or return a profile for a missing user', async () => {
+      usersRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.getProfile('missing')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(userRanksRepo.findOne).not.toHaveBeenCalled();
+    });
   });
 
   describe('linkWallet', () => {

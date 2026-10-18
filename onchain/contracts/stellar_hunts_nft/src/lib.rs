@@ -106,7 +106,11 @@ impl StellarHuntsNft {
             panic_with_error!(&env, Error::InvalidBaseUri);
         }
 
-        if name_text.len() > MAX_NAME_LEN || symbol_text.len() > MAX_SYMBOL_LEN {
+        if name_text.is_empty()
+            || symbol_text.is_empty()
+            || name_text.len() > MAX_NAME_LEN
+            || symbol_text.len() > MAX_SYMBOL_LEN
+        {
             panic_with_error!(&env, Error::MetadataTooLarge);
         }
 

@@ -12,11 +12,10 @@ const DEFAULT_RPC_TIMEOUT_MS = 2000;
 /**
  * Health indicator for the Stellar / Soroban RPC endpoint.
  *
- * Only active when the backend is running in live mode with a configured
- * `SOROBAN_RPC_URL` (`STELLAR_MODE != mock`). In mock mode the dependency is
- * not required, so the check reports healthy to keep local/dev readiness
- * green. A reachable RPC URL answering with any non-5xx status is treated as
- * healthy; 5xx responses and timeouts are failures.
+ * Required outside mock mode. In mock mode the dependency is not required,
+ * so the check reports healthy to keep local/dev readiness green. A reachable
+ * RPC URL answering with any non-5xx status is treated as healthy; 5xx
+ * responses, missing configuration, and timeouts are failures.
  */
 @Injectable()
 export class StellarRpcHealthIndicator extends HealthIndicator {
@@ -38,6 +37,10 @@ export class StellarRpcHealthIndicator extends HealthIndicator {
   }
 
   get isConfigured(): boolean {
+    return Boolean(this.rpcUrl);
+  }
+
+  get isRequired(): boolean {
     return this.enabled;
   }
 
@@ -50,7 +53,11 @@ export class StellarRpcHealthIndicator extends HealthIndicator {
     }
 
     try {
-      const response = await axios.get(this.rpcUrl as string, {
+      if (!this.rpcUrl) {
+        throw new Error('SOROBAN_RPC_URL is required outside mock mode');
+      }
+
+      const response = await axios.get(this.rpcUrl, {
         timeout: timeoutMs,
         validateStatus: () => true,
       });

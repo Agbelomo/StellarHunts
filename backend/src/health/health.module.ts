@@ -10,10 +10,8 @@ import { StellarRpcHealthIndicator } from './indicators/stellar-rpc-health.indic
  * ------------
  * Exposes liveness and readiness probes for the API.
  *
- * - `GET /api/health/live`  — liveness: the process is up and serving.
- * - `GET /api/health/ready` — readiness: required dependencies (PostgreSQL,
- *   Redis, and Stellar RPC when running in live mode) are reachable. Fails
- *   with HTTP 503 when any required dependency is unavailable.
+ * - `GET /healthz` and `GET /api/<version>/health/live` — liveness.
+ * - `GET /readyz` and `GET /api/<version>/health/ready` — readiness.
  *
  * Terminus emits the standard `{ status, info, error, details }` payload for
  * the readiness check; the liveness endpoint returns a minimal payload so

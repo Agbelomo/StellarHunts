@@ -291,12 +291,12 @@ export function usePuzzleContract(opts = {}) {
             : "❌ Incorrect answer. Try again!",
         };
         setFeedback(fb);
-        return fb;
+        return { ...fb, submitted: true };
       } catch (err) {
         const message = err.message || "Transaction failed";
         setError(message);
         setFeedback({ correct: false, message });
-        return { correct: false, message };
+        return { correct: false, message, submitted: false };
       } finally {
         setSubmitting(false);
       }

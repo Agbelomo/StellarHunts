@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -10,10 +10,16 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { usePuzzleContract } from "@/hooks/usePuzzleContract";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
+import {
+  getPuzzleAnswerOptions,
+  getPuzzleAnswerType,
+  validatePuzzleAnswer,
+} from "@/lib/puzzle-answer";
 import {
   CheckCircle2,
   XCircle,
@@ -152,6 +158,8 @@ const PuzzleComponent = ({
   // Merge external data with fallback defaults
   const puzzle = externalPuzzle || DEFAULT_PUZZLE;
   const qId = questionId ?? puzzle.id ?? 0;
+  const answerType = getPuzzleAnswerType(puzzle);
+  const answerOptions = getPuzzleAnswerOptions(puzzle);
   const prefersReducedMotion = useReducedMotion();
 
   // ── Local state ───────────────────────────────────────────
@@ -159,6 +167,10 @@ const PuzzleComponent = ({
   const [showHint, setShowHint] = useState(false);
   const [tempHint, setTempHint] = useState(null); // shown while contract hint loads
   const [submitted, setSubmitted] = useState(false);
+  const [answerError, setAnswerError] = useState("");
+  const [attemptHistory, setAttemptHistory] = useState([]);
+  const [historyError, setHistoryError] = useState("");
+  const submitLock = useRef(false);
 
   // ── Contract hook ─────────────────────────────────────────
   const {
@@ -185,21 +197,85 @@ const PuzzleComponent = ({
     checkWallet();
   }, [checkWallet]);
 
+  useEffect(() => {
+    setAnswer("");
+    setSubmitted(false);
+    setAnswerError("");
+    clearFeedback();
+
+    try {
+      const stored = window.localStorage.getItem(
+        `stellar-hunts:puzzle-attempts:${encodeURIComponent(String(qId))}`,
+      );
+      const parsedHistory = stored ? JSON.parse(stored) : [];
+      if (
+        !Array.isArray(parsedHistory) ||
+        parsedHistory.some(
+          (attempt) =>
+            !attempt ||
+            typeof attempt.answer !== "string" ||
+            typeof attempt.correct !== "boolean" ||
+            !Number.isFinite(Date.parse(attempt.submittedAt)),
+        )
+      ) {
+        throw new Error("Stored attempt history is not a list.");
+      }
+      setAttemptHistory(parsedHistory);
+      setHistoryError("");
+    } catch {
+      setAttemptHistory([]);
+      setHistoryError("Attempt history could not be loaded from this browser.");
+    }
+  }, [qId, clearFeedback]);
+
   // ── Handlers ──────────────────────────────────────────────
 
   const handleSubmit = useCallback(
     async (e) => {
       e?.preventDefault();
-      if (!answer.trim()) return;
+      if (submitLock.current || submitting) return;
 
+      const validationError = validatePuzzleAnswer(answer, puzzle);
+      if (validationError) {
+        setAnswerError(validationError);
+        return;
+      }
+
+      submitLock.current = true;
+      setAnswerError("");
       setSubmitted(true);
-      const result = await submitAnswer(qId, answer.trim());
+      try {
+        const normalizedAnswer = answer.trim();
+        const result = await submitAnswer(qId, normalizedAnswer);
 
-      if (result?.correct && onCorrectAnswer) {
-        onCorrectAnswer(qId);
+        if (result?.submitted) {
+          const attempt = {
+            answer: normalizedAnswer,
+            correct: result.correct,
+            submittedAt: new Date().toISOString(),
+          };
+          const nextHistory = [attempt, ...attemptHistory].slice(0, 20);
+          setAttemptHistory(nextHistory);
+
+          try {
+            window.localStorage.setItem(
+              `stellar-hunts:puzzle-attempts:${encodeURIComponent(String(qId))}`,
+              JSON.stringify(nextHistory),
+            );
+            setHistoryError("");
+          } catch {
+            setHistoryError("Attempt history could not be saved in this browser.");
+          }
+        }
+
+        if (result?.correct && onCorrectAnswer) {
+          onCorrectAnswer(qId);
+        }
+      } finally {
+        submitLock.current = false;
       }
     },
-    [answer, qId, submitAnswer, onCorrectAnswer]
+    [answer, attemptHistory, onCorrectAnswer, puzzle, qId, submitAnswer, submitting]
   );
 
   const handleHintToggle = useCallback(async () => {
@@ -230,6 +306,7 @@ const PuzzleComponent = ({
   const handleAnswerChange = useCallback(
     (e) => {
       setAnswer(e.target.value);
+      setAnswerError("");
       if (submitted) {
         setSubmitted(false);
         clearFeedback();
@@ -327,24 +404,73 @@ const PuzzleComponent = ({
         {/* ── Input & Submit ───────────────────────────────── */}
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="relative">
-            <Input
-              type="text"
-              placeholder="Enter your answer…"
-              value={answer}
-              onChange={handleAnswerChange}
-              disabled={submitting || isCorrect}
-              className="h-12 border-white/10 bg-white/[0.04] pr-12 text-white placeholder:text-gray-400 focus:border-purple-400/50 focus:ring-2 focus:ring-purple-400/30"
-            />
-            {/* Character count indicator */}
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">
-              {answer.length}
-            </span>
+            <label htmlFor="puzzle-answer" className="sr-only">
+              Your answer
+            </label>
+            {answerType === "multiple_choice" ? (
+              <select
+                id="puzzle-answer"
+                value={answer}
+                onChange={handleAnswerChange}
+                disabled={submitting || isCorrect}
+                aria-invalid={Boolean(answerError)}
+                aria-describedby={answerError ? "puzzle-answer-error" : undefined}
+                className="h-12 w-full rounded-md border border-white/10 bg-[#201d42] px-3 text-white focus:border-purple-400/50 focus:outline-none focus:ring-2 focus:ring-purple-400/30 disabled:opacity-50"
+              >
+                <option value="">Choose an answer…</option>
+                {answerOptions.map((option, index) => (
+                  <option key={`${index}-${option}`} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            ) : answerType === "code" ? (
+              <Textarea
+                id="puzzle-answer"
+                placeholder="Enter your code answer…"
+                value={answer}
+                onChange={handleAnswerChange}
+                disabled={submitting || isCorrect}
+                maxLength={4096}
+                aria-invalid={Boolean(answerError)}
+                aria-describedby={answerError ? "puzzle-answer-error" : undefined}
+                className="min-h-24 border-white/10 bg-white/[0.04] text-white placeholder:text-gray-400 focus:border-purple-400/50 focus:ring-2 focus:ring-purple-400/30"
+              />
+            ) : (
+              <Input
+                id="puzzle-answer"
+                type="text"
+                inputMode={answerType === "number" || answerType === "math" ? "decimal" : undefined}
+                placeholder="Enter your answer…"
+                value={answer}
+                onChange={handleAnswerChange}
+                disabled={submitting || isCorrect}
+                maxLength={4096}
+                aria-invalid={Boolean(answerError)}
+                aria-describedby={answerError ? "puzzle-answer-error" : undefined}
+                className="h-12 border-white/10 bg-white/[0.04] pr-12 text-white placeholder:text-gray-400 focus:border-purple-400/50 focus:ring-2 focus:ring-purple-400/30"
+              />
+            )}
+            {answerType !== "multiple_choice" && answerType !== "code" && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">
+                {answer.length}
+              </span>
+            )}
+            {answerError && (
+              <p
+                id="puzzle-answer-error"
+                role="alert"
+                className="mt-2 text-sm text-red-300"
+              >
+                {answerError}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button
               type="submit"
-              disabled={submitting || !answer.trim() || isCorrect}
+              disabled={submitting || isCorrect}
               className="group relative flex-1 overflow-hidden bg-gradient-to-r from-purple-500 to-pink-500 py-6 text-base font-semibold shadow-lg shadow-purple-500/25 transition-all duration-300 hover:from-purple-600 hover:to-pink-600 hover:shadow-purple-500/40 disabled:opacity-40"
             >
               <span className="flex items-center justify-center gap-2">
@@ -389,6 +515,44 @@ const PuzzleComponent = ({
             </Alert>
           )}
         </div>
+
+        <section aria-labelledby="attempt-history-title" className="space-y-2">
+          <h3 id="attempt-history-title" className="text-sm font-semibold text-gray-200">
+            Attempt history
+          </h3>
+          {historyError && (
+            <p role="alert" className="text-sm text-amber-200">
+              {historyError}
+            </p>
+          )}
+          {attemptHistory.length === 0 ? (
+            <p className="text-sm text-gray-400">No submitted attempts yet.</p>
+          ) : (
+            <ol className="space-y-2">
+              {attemptHistory.map((attempt, index) => (
+                <li
+                  key={`${attempt.submittedAt}-${index}`}
+                  className="flex items-start justify-between gap-3 rounded-lg bg-white/[0.04] px-3 py-2 text-sm"
+                >
+                  <span className="min-w-0 break-words text-gray-200">
+                    {attempt.answer}
+                  </span>
+                  <span
+                    className={attempt.correct ? "shrink-0 text-emerald-300" : "shrink-0 text-red-300"}
+                  >
+                    {attempt.correct ? "Correct" : "Incorrect"}
+                  </span>
+                  <time
+                    className="shrink-0 text-xs text-gray-400"
+                    dateTime={attempt.submittedAt}
+                  >
+                    {new Date(attempt.submittedAt).toLocaleString()}
+                  </time>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
 
         {/* ── Footer actions ───────────────────────────────── */}
         <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">

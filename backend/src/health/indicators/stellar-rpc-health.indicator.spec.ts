@@ -37,6 +37,17 @@ describe('StellarRpcHealthIndicator', () => {
       mockConfig('live', undefined),
     );
     expect(indicator.isConfigured).toBe(false);
+    expect(indicator.isRequired).toBe(true);
+  });
+
+  it('fails readiness when live mode has no rpc url', async () => {
+    const indicator = new StellarRpcHealthIndicator(
+      mockConfig('live', undefined),
+    );
+
+    await expect(indicator.pingCheck('stellar-rpc')).rejects.toBeInstanceOf(
+      HealthCheckError,
+    );
   });
 
   it('reports healthy when the rpc endpoint answers with a non-5xx status', async () => {
