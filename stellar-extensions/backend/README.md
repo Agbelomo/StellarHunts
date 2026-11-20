@@ -1,27 +1,16 @@
-# Puzzle submission throttle extension
+# Puzzle Version Comparison
 
-This NestJS extension is intentionally kept separate from `backend/`. Import
-`PuzzleSubmissionThrottleModule` in the host application, then attach
-`PuzzleSubmissionThrottleGuard` and `PuzzleSubmissionThrottleInterceptor` to
-the puzzle submission route:
+This NestJS module compares records from the existing `puzzle_versions` table.
+Import `PuzzleVersionComparisonModule` into a NestJS application that already
+configures TypeORM and the puzzle version entity.
 
-```ts
-@UseGuards(PuzzleSubmissionThrottleGuard)
-@UseInterceptors(PuzzleSubmissionThrottleInterceptor)
-```
+Endpoints:
 
-The guard resolves difficulty from the persisted puzzle record; it does not
-trust difficulty supplied by the caller. The interceptor records the
-submission result so incorrect answers receive escalating backoff and correct
-answers clear that backoff.
+- `GET /puzzle-version-comparison/compare?fromVersionId=<id>&toVersionId=<id>`
+  compares two versions belonging to the same puzzle.
+- `GET /puzzle-version-comparison/puzzles/<puzzleId>/history` returns versions
+  in chronological (ascending version) order.
 
-Administrators can read and update the live settings at
-`/admin/settings/puzzle-submission-throttle`. Updates are in-memory for the
-current application process. The route uses the host application's
-`admin-jwt` strategy and allows `ADMIN` and `SUPERADMIN` roles.
-
-Run the extension unit tests from the repository root with:
-
-```sh
-./node_modules/.bin/jest --config stellar-extensions/backend/jest.config.js --runInBand
-```
+The comparison response contains JSON-pointer content changes and dedicated
+changes for `testCases`, `difficulty`, and `hints` (or the legacy singular
+`hint` field).
