@@ -1,6 +1,11 @@
-# Extension Test Suite
+# Stellar Extensions — Tests
 
-Unit tests for the extension game store (`stellar-extensions/frontend/store/useGameStore.js`).
+Tests for features contributed under `stellar-extensions/`.
+
+## Game store (`useGameStore`)
+
+`useGameStore.test.js` covers the extension game store
+(`stellar-extensions/frontend/store/useGameStore.js`).
 
 The core `frontend/store/useGameStore.js` is frozen by the extension isolation
 rule and has no `setPuzzle`, `updateProgress`, or streak actions. The extension
@@ -8,9 +13,7 @@ store implements that documented surface with the same durable-progress model
 and its own persist key (`stellar-extensions-game-store:v1`), so it can be
 tested and adopted without modifying core frontend state.
 
-## Running
-
-From this directory:
+Run it from this directory:
 
 ```bash
 npm test
@@ -26,7 +29,7 @@ The suite uses Vitest's `node` environment and a localStorage-compatible
 in-memory harness (`tests/setup.js`), so it needs no browser or extra
 dependencies.
 
-## Coverage
+### Coverage
 
 | Acceptance criterion | Test group |
 | -------------------- | ---------- |
@@ -41,3 +44,31 @@ dependencies.
 The persistence tests cover both the write side (only durable fields under the
 extension key, correct `version`) and the read side (a fresh store rehydrates
 the same progress and streak).
+
+## Referral system
+
+`referral/referral.integration.test.ts` wires the real backend referral
+services (`backend/src/referral/`) together with in-memory repositories and
+covers the full flow:
+
+- referral code / link generation
+- attribution on registration
+- reward distribution when the referee completes their first puzzle
+- multi-level (`A -> B -> C`) referral rewards
+- self-referral and duplicate attribution prevention
+- referral statistics and pending/processed bonus totals
+
+Run it from the repository root (Jest and ts-jest are already installed at the
+root workspace):
+
+```bash
+npx jest --config stellar-extensions/tests/jest.config.js
+```
+
+## Other suites
+
+- `puzzle-solution-checker.spec.ts` — Jest specs for the extension puzzle
+  solution checker.
+- The Jest config matches `*.test.ts` under this directory; the Vitest config
+  matches `*.{test,spec}.js`, so the two runners do not pick up each other's
+  files.
