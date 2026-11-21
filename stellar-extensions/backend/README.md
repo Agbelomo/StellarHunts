@@ -14,3 +14,14 @@ Endpoints:
 The comparison response contains JSON-pointer content changes and dedicated
 changes for `testCases`, `difficulty`, and `hints` (or the legacy singular
 `hint` field).
+
+## Maintenance mode guard
+
+`src/maintenance-mode/maintenance.guard.ts` reads the existing maintenance
+service status and blocks non-admin requests with HTTP 503. Admin roles and
+routes marked with the existing maintenance decorators bypass the check.
+`/health` and `/auth/*` are excluded by default; additional exact paths or
+prefix wildcards can be supplied through `MAINTENANCE_GUARD_OPTIONS` or the
+maintenance service's `allowedRoutes`. Scheduled start/end timestamps are
+checked directly, so enforcement does not wait for the service's scheduled
+maintenance cron job.
